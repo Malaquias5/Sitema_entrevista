@@ -2,13 +2,7 @@ package com.malaquias.entrevista.controller;
 
 import java.util.List;
 
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import com.malaquias.entrevista.model.Pregunta;
 import com.malaquias.entrevista.service.PreguntaService;
@@ -32,9 +26,26 @@ public class PreguntaController {
         return service.buscar(keyword);
     }
 
+    @GetMapping("/by-categoria")
+    public List<Pregunta> buscarPorInicial(@RequestParam String inicial) {
+        return service.buscarPorInicialCategoria(inicial);
+    }
+
+    // Obtener por ID
+    @GetMapping("/{id}")
+    public Pregunta obtener(@PathVariable Long id) {
+        return service.obtenerPorId(id);
+    }
+
+    // Crear
     @PostMapping
     public Pregunta crear(@RequestBody Pregunta pregunta){
         return service.guardar(pregunta);
     }
-}
 
+    // Actualizar completa (incluye respuesta)
+    @PutMapping("/{id}")
+    public Pregunta actualizar(@PathVariable Long id, @RequestBody Pregunta pregunta) {
+        return service.actualizar(id, pregunta);
+    }
+}

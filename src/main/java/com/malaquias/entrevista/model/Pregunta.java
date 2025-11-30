@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
-@Table(name = "pregunta")
+@Table(name = "pregunta", indexes = {
+        @Index(name = "idx_pregunta_categoria", columnList = "categoria")
+})
 public class Pregunta {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -13,6 +15,8 @@ public class Pregunta {
     private String contenido;
     private String categoria;
     private String etiquetas;
+    @Column(columnDefinition = "TEXT")
+    private String respuesta; // nueva columna para la respuesta
     private Instant createdAt = Instant.now();
 
     public Long getId() {
@@ -53,6 +57,14 @@ public class Pregunta {
 
     public void setEtiquetas(String etiquetas) {
         this.etiquetas = etiquetas;
+    }
+
+    public String getRespuesta() {
+        return respuesta;
+    }
+
+    public void setRespuesta(String respuesta) {
+        this.respuesta = respuesta;
     }
 
     public Instant getCreatedAt() {

@@ -1,102 +1,136 @@
 package com.malaquias.entrevista.service;
 
-import com.malaquias.entrevista.model.IaCache;
-import com.malaquias.entrevista.repository.IaCacheRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.malaquias.entrevista.model.IaCache;
+import com.malaquias.entrevista.repository.IaCacheRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
+
+import jakarta.annotation.PostConstruct;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Optional;
 
 @Service
 public class IAService {
+
     private final IaCacheRepository cacheRepo;
     private final WebClient webClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Value("${app.openai.model:gpt-3.5-turbo}")
+    // ----------- CONFIGURACIONES DESDE application.properties -----------
+
+    @Value("${app.openai.apiKey}")  // ✔ coincide con el .properties
+    private String apiKey;
+
+    @Value("${app.openai.model:gpt-4o-mini}")  // ✔ modelo por defecto
     private String modelo;
 
-    // Toma API key desde variable de entorno OPENAI_API_KEY
+    // --------------------------------------------------------------------
+
     public IAService(IaCacheRepository cacheRepo) {
         this.cacheRepo = cacheRepo;
-        String apiKey = System.getenv("OPENAI_API_KEY");
+
         this.webClient = WebClient.builder()
                 .baseUrl("https://api.openai.com/v1")
-                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, "application/json")
                 .build();
     }
 
-    // Calcula hash simple del prompt
+    // Validar que la API KEY exista
+    @PostConstruct
+    public void validarApiKey() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new RuntimeException("❌ ERROR: No se encontró app.openai.apiKey en application.properties");
+        }
+    }
+
+
+    // Crear hash SHA-256 del prompt para caching
     private String sha256(String text) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+
             StringBuilder sb = new StringBuilder();
             for (byte b : hash) sb.append(String.format("%02x", b));
+
             return sb.toString();
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            return String.valueOf(text.hashCode());
         }
     }
 
-    public String preguntarIA(String pregunta) {
-        String prompt = buildPrompt(pregunta);
-        String hash = sha256(prompt);
+    // -------------------- MÉTODO PRINCIPAL --------------------------------
 
-        Optional<IaCache> cached = cacheRepo.findByPromptHash(hash);
-        if (cached.isPresent()) {
-            return cached.get().getRespuestaTexto();
+    public String preguntarIA(String pregunta) {
+        String hash = sha256(pregunta);
+
+        Optional<IaCache> cache = cacheRepo.findByPromptHash(hash);
+        if (cache.isPresent()) {
+            return cache.get().getRespuestaTexto();
         }
 
-        // Preparar payload para Chat Completions (gpt-3.5-turbo style)
         try {
-            String body = mapper.writeValueAsString(
-                java.util.Map.of(
-                    "model", modelo,
-                    "messages", java.util.List.of(
-                        java.util.Map.of("role","system","content","Eres un asistente conciso para respuestas técnicas."),
-                        java.util.Map.of("role","user","content", prompt)
-                    ),
-                    "max_tokens", 500,
-                    "temperature", 0.2
-                )
-            );
+            String body = """
+                {
+                  "model": "%s",
+                  "messages": [
+                    { "role": "system", "content": "Eres un asistente técnico conciso." },
+                    { "role": "user", "content": "%s" }
+                  ]
+                }
+                """.formatted(modelo, pregunta);
 
-            Mono<String> respMono = webClient.post()
+            String responseJson = webClient.post()
                     .uri("/chat/completions")
-                    .header("Content-Type", "application/json")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                     .bodyValue(body)
                     .retrieve()
-                    .bodyToMono(String.class);
+                    .bodyToMono(String.class)
+                    .block();
 
-            String respStr = respMono.block(); // bloquear en este servicio simple
-            JsonNode node = mapper.readTree(respStr);
-            String texto = node.get("choices").get(0).get("message").get("content").asText();
+            JsonNode root = mapper.readTree(responseJson);
+            String texto = root.path("choices")
+                    .get(0)
+                    .path("message")
+                    .path("content")
+                    .asText();
 
-            // Guardar en cache
-            IaCache c = new IaCache();
-            c.setPromptHash(hash);
-            c.setPreguntaTexto(pregunta);
-            c.setRespuestaTexto(texto);
-            c.setModelo(modelo);
-            // tokensUsados si el api devuelve usage -> parsearlo
-            cacheRepo.save(c);
+            IaCache record = new IaCache();
+            record.setPromptHash(hash);
+            record.setPreguntaTexto(pregunta);
+            record.setRespuestaTexto(texto);
+            record.setModelo(modelo);
+            cacheRepo.save(record);
 
             return texto;
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error: no se pudo obtener respuesta de la IA.";
+            return "❌ Error: no se pudo obtener respuesta de la IA.";
         }
     }
 
+
+
+    // Prompt pre-diseñado
     private String buildPrompt(String pregunta) {
-        // Plantilla: pide respuesta corta + ejemplo si aplica
-        return "Responder brevemente (1-2 párrafos) a la siguiente pregunta técnica. Si es útil, incluye un pequeño ejemplo de código.\n\nPregunta: " + pregunta + "\n\nRespuesta:";
+        return """
+                Responde en 1–2 párrafos la siguiente pregunta técnica.
+                Incluye un pequeño ejemplo de código si es necesario.
+
+                Pregunta: %s
+
+                Respuesta:
+                """.formatted(pregunta);
+    }
+
+    public String generarRespuesta(String pregunta) {
+        return preguntarIA(pregunta);
     }
 }

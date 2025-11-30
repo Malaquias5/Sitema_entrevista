@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface PreguntaRepository extends JpaRepository<Pregunta, Long> {
     List<Pregunta> findByTituloContainingIgnoreCaseOrContenidoContainingIgnoreCase(String t, String c);
+    List<Pregunta> findByCategoriaStartingWithIgnoreCase(String prefix);
 }
